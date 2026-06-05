@@ -1,6 +1,6 @@
 #include <Servo.h>
 
-// 摇杆引脚定义
+// Joystick pin definitions
 const int joy1XPin = A0;
 const int joy1YPin = A1;
 const int joy1ButtonPin = 2;
@@ -11,35 +11,35 @@ const int joy2ButtonPin = 4;
 
 const int ledPin = 3;
 
-// 4个舵机控制引脚
+// 4 servo control pins
 const int servoPins[] = {5, 9, 10, 11};
 Servo servos[4];
 
-// 舵机初始角度（归零位置）
+// Servo initial angles (zero position)
 const int servoInit[] = {45, 45, 0, 90};
 int servoAngles[] = {45, 45, 0, 90};
 int targetAngles[] = {45, 45, 0, 90};
 
-// 舵机角度范围配置
+// Servo angle range configuration
 const int servoRange[4][2] = {
-  {0, 90},    // 舵机0：0~90
-  {0, 90},    // 舵机1：0~90
-  {0, 90},    // 舵机2：0~90
-  {0, 180}    // 舵机3：0~180
+  {0, 90},    // Servo0: 0-90 deg
+  {0, 90},    // Servo1: 0-90 deg
+  {0, 90},    // Servo2: 0-90 deg
+  {0, 180}    // Servo3: 0-180 deg
 };
 
 const int deadZone = 50;
 const int stepAngle = 1;
 const int joyDelay = 30;
 
-// 平滑运动速度（值越大越快，1=最慢）
+// Smooth motion speed (higher = faster, 1=slowest)
 const int smoothSpeed = 1;
 
-// 按钮防抖
+// Button debounce
 unsigned long lastButtonTime = 0;
 const int debounceDelay = 50;
 
-// 系统状态
+// System state
 enum SystemState { INITIALIZING, RUNNING };
 SystemState systemState = INITIALIZING;
 unsigned long lastBlinkTime = 0;
@@ -71,21 +71,21 @@ void setup() {
 }
 
 void printHelp() {
-  Serial.println(F("========== 舵机控制 =========="));
-  Serial.println(F("命令:"));
-  Serial.println(F("  0 45   - 舵机0设置到45度"));
-  Serial.println(F("  1 90   - 舵机1设置到90度"));
-  Serial.println(F("  2 30   - 舵机2设置到30度"));
-  Serial.println(F("  3 180  - 舵机3设置到180度"));
-  Serial.println(F("  Z      - 全部归零"));
-  Serial.println(F("  A      - 查看所有角度"));
-  Serial.println(F("  H      - 显示帮助"));
-  Serial.println(F("================================"));
+  Serial.println(F("========== Servo Control =========="));
+  Serial.println(F("Commands:"));
+  Serial.println(F("  0 45   - Set Servo0 to 45 deg"));
+  Serial.println(F("  1 90   - Set Servo1 to 90 deg"));
+  Serial.println(F("  2 30   - Set Servo2 to 30 deg"));
+  Serial.println(F("  3 180  - Set Servo3 to 180 deg"));
+  Serial.println(F("  Z      - Reset all servos"));
+  Serial.println(F("  A      - Show all angles"));
+  Serial.println(F("  H      - Show help"));
+  Serial.println(F("=================================="));
 }
 
 void setServoAngle(int servoIndex, int angle) {
   if (servoIndex < 0 || servoIndex > 3) {
-    Serial.println(F("舵机编号 0-3"));
+    Serial.println(F("Servo index 0-3"));
     return;
   }
   
@@ -102,7 +102,7 @@ void zeroAll() {
   for (int i = 0; i < 4; i++) {
     targetAngles[i] = servoInit[i];
   }
-  Serial.println(F("归零完成"));
+  Serial.println(F("Reset complete"));
 }
 
 void printAllAngles() {
