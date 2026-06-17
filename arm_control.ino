@@ -1,213 +1,214 @@
+/*
+ * Servo Arm Control System
+ * Main Controller: Arduino UNO R3
+ * 
+ * Hardware:
+ * - 2x Dual-axis Joystick Modules
+ * - 4x MG995 Servo Motors
+ * - No LED
+ * 
+ * Control Methods:
+ * 1. Joystick Control - Physical joysticks
+ * 2. Serial Commands - Arduino IDE Serial Monitor
+ * 3. Python GUI - Computer interface
+ * Modify: Remove servo4, Servo3 init angle 0, S1/S2 range 0-90 init 45, no auto refresh status
+ */
 #include <Servo.h>
 
-// Joystick pin definitions
+// ===================== PIN DEFINITIONS =====================
 const int joy1XPin = A0;
 const int joy1YPin = A1;
-const int joy1ButtonPin = 2;
+const int joy1BtnPin = 2;
 
 const int joy2XPin = A3;
 const int joy2YPin = A2;
-const int joy2ButtonPin = 4;
+const int joy2BtnPin = 4;
 
-const int ledPin = 3;
+const int servoPins[] = {11, 10, 9, 5};
+const int SERVO_COUNT = 4;
 
-// 4 servo control pins
-const int servoPins[] = {5, 9, 10, 11};
-Servo servos[4];
+// ===================== GLOBAL ADJUST PARAMETERS =====================
+const int deadZone     = 60;
+const int joyStep      = 1;
+const int moveDelay    = 40;
+const int btnDebounce  = 80;
+const int btnStep      = 3;
+const int smoothStep   = 1;
 
-// Servo initial angles (zero position)
-const int servoInit[] = {45, 45, 0, 90};
-int servoAngles[] = {45, 45, 0, 90};
-int targetAngles[] = {45, 45, 0, 90};
+const int MAX_ANGLE_NORMAL = 180;
+const int MAX_ANGLE_LIMITED = 90;
+const int MIN_ANGLE        = 0;
 
-// Servo angle range configuration
-const int servoRange[4][2] = {
-  {0, 90},    // Servo0: 0-90 deg
-  {0, 90},    // Servo1: 0-90 deg
-  {0, 90},    // Servo2: 0-90 deg
-  {0, 180}    // Servo3: 0-180 deg
-};
+// ===================== GLOBAL VARIABLES =====================
+Servo servos[SERVO_COUNT];
+// S0:90, S1:45, S2:45, S3:0, removed S4
+int angles[SERVO_COUNT]  = {90, 45, 45, 0};
+int targets[SERVO_COUNT]= {90, 45, 45, 0};
 
-const int deadZone = 50;
-const int stepAngle = 1;
-const int joyDelay = 30;
+unsigned long lastMoveTick = 0;
+unsigned long lastBtn1Tick  = 0;
+unsigned long lastBtn2Tick  = 0;
 
-// Smooth motion speed (higher = faster, 1=slowest)
-const int smoothSpeed = 1;
+String serialBuffer = "";
 
-// Button debounce
-unsigned long lastButtonTime = 0;
-const int debounceDelay = 50;
-
-// System state
-enum SystemState { INITIALIZING, RUNNING };
-SystemState systemState = INITIALIZING;
-unsigned long lastBlinkTime = 0;
-const int blinkInterval = 500;
-
+// ===================== SETUP =====================
 void setup() {
-  Serial.begin(9600);
+  pinMode(joy1BtnPin, INPUT_PULLUP);
+  pinMode(joy2BtnPin, INPUT_PULLUP);
 
-  pinMode(joy1ButtonPin, INPUT_PULLUP);
-  pinMode(joy2ButtonPin, INPUT_PULLUP);
-  pinMode(ledPin, OUTPUT);
-  digitalWrite(ledPin, LOW);
-
-  for (int i = 0; i < 4; i++) {
-    if (millis() - lastBlinkTime >= blinkInterval) {
-      digitalWrite(ledPin, !digitalRead(ledPin));
-      lastBlinkTime = millis();
-    }
-    
+  for(int i = 0; i < SERVO_COUNT; i++){
     servos[i].attach(servoPins[i]);
-    servos[i].write(servoAngles[i]);
-    delay(80);
+    servos[i].write(angles[i]);
+    delay(30);
   }
 
-  digitalWrite(ledPin, HIGH);
-  systemState = RUNNING;
+  Serial.begin(9600);
+  while(!Serial) delay(10);
 
-  printHelp();
+  printHelpInfo();
+  Serial.print("Init OK, Home: ");
+  printNumArray(angles, SERVO_COUNT);
 }
 
-void printHelp() {
-  Serial.println(F("========== Servo Control =========="));
-  Serial.println(F("Commands:"));
-  Serial.println(F("  0 45   - Set Servo0 to 45 deg"));
-  Serial.println(F("  1 90   - Set Servo1 to 90 deg"));
-  Serial.println(F("  2 30   - Set Servo2 to 30 deg"));
-  Serial.println(F("  3 180  - Set Servo3 to 180 deg"));
-  Serial.println(F("  Z      - Reset all servos"));
-  Serial.println(F("  A      - Show all angles"));
-  Serial.println(F("  H      - Show help"));
-  Serial.println(F("=================================="));
-}
+// ===================== MAIN LOOP =====================
+void loop() {
+  unsigned long nowMs = millis();
 
-void setServoAngle(int servoIndex, int angle) {
-  if (servoIndex < 0 || servoIndex > 3) {
-    Serial.println(F("Servo index 0-3"));
+  if(nowMs - lastMoveTick < moveDelay){
     return;
   }
-  
-  angle = constrain(angle, servoRange[servoIndex][0], servoRange[servoIndex][1]);
-  targetAngles[servoIndex] = angle;
-  
-  Serial.print(F("S"));
-  Serial.print(servoIndex);
-  Serial.print(F(" -> "));
-  Serial.println(angle);
+  lastMoveTick = nowMs;
+
+  handleSerialInput();
+  smoothServoMove();
+  handleJoysticks();
 }
 
-void zeroAll() {
-  for (int i = 0; i < 4; i++) {
-    targetAngles[i] = servoInit[i];
+// ===================== SMOOTH SERVO INTERPOLATION =====================
+void smoothServoMove(){
+  for(int i = 0; i < SERVO_COUNT; i++){
+    if(angles[i] < targets[i]){
+      angles[i] += smoothStep;
+      if(angles[i] > targets[i]) angles[i] = targets[i];
+    }else if(angles[i] > targets[i]){
+      angles[i] -= smoothStep;
+      if(angles[i] < targets[i]) angles[i] = targets[i];
+    }
+    servos[i].write(angles[i]);
   }
-  Serial.println(F("Reset complete"));
 }
 
-void printAllAngles() {
-  for (int i = 0; i < 4; i++) {
-    Serial.print(F("S"));
-    Serial.print(i);
-    Serial.print(F(": "));
-    Serial.print(servoAngles[i]);
-    Serial.print(F("("));
-    Serial.print(targetAngles[i]);
-    Serial.print(F(") "));
-  }
-  Serial.println();
+// ===================== JOYSTICK PROCESS =====================
+void handleJoysticks(){
+  int j1X = analogRead(joy1XPin) - 512;
+  int j1Y = analogRead(joy1YPin) - 512;
+  int j2X = analogRead(joy2XPin) - 512;
+  int j2Y = analogRead(joy2YPin) - 512;
+
+  if(j1X < -deadZone) targets[0] = constrain(targets[0] - joyStep, MIN_ANGLE, MAX_ANGLE_NORMAL);
+  else if(j1X > deadZone) targets[0] = constrain(targets[0] + joyStep, MIN_ANGLE, MAX_ANGLE_NORMAL);
+
+  if(j1Y < -deadZone) targets[1] = constrain(targets[1] - joyStep, MIN_ANGLE, MAX_ANGLE_LIMITED);
+  else if(j1Y > deadZone) targets[1] = constrain(targets[1] + joyStep, MIN_ANGLE, MAX_ANGLE_LIMITED);
+
+  if(j2X < -deadZone) targets[2] = constrain(targets[2] - joyStep, MIN_ANGLE, MAX_ANGLE_LIMITED);
+  else if(j2X > deadZone) targets[2] = constrain(targets[2] + joyStep, MIN_ANGLE, MAX_ANGLE_LIMITED);
+
+  if(j2Y < -deadZone) targets[3] = constrain(targets[3] - joyStep, MIN_ANGLE, MAX_ANGLE_NORMAL);
+  else if(j2Y > deadZone) targets[3] = constrain(targets[3] + joyStep, MIN_ANGLE, MAX_ANGLE_NORMAL);
 }
 
-void smoothMove() {
-  for (int i = 0; i < 4; i++) {
-    if (servoAngles[i] < targetAngles[i]) {
-      servoAngles[i] = min(servoAngles[i] + smoothSpeed, targetAngles[i]);
-      servos[i].write(servoAngles[i]);
-    } else if (servoAngles[i] > targetAngles[i]) {
-      servoAngles[i] = max(servoAngles[i] - smoothSpeed, targetAngles[i]);
-      servos[i].write(servoAngles[i]);
+// ===================== SERIAL DATA PROCESS =====================
+void handleSerialInput(){
+  while(Serial.available() > 0){
+    char ch = Serial.read();
+    if(ch == '\n' || ch == '\r'){
+      if(serialBuffer.length() > 0){
+        parseSerialCommand(serialBuffer);
+        serialBuffer = "";
+      }
+    }else{
+      if((ch >= '0' && ch <= '9') || ch == ' ' || ch == 'h' || ch == 's'){
+        serialBuffer += ch;
+      }
     }
   }
 }
 
-void processCommand(String cmd) {
+void parseSerialCommand(String cmd){
   cmd.trim();
-  cmd.toUpperCase();
+  if(cmd.length() == 0) return;
 
-  if (cmd.length() == 0) return;
+  if(cmd == "h" || cmd == "help"){
+    printHelpInfo();
+    return;
+  }
+  if(cmd == "s" || cmd == "status"){
+    Serial.print("STATUS All Servos [S0,S1,S2,S3]: ");
+    printNumArray(angles, SERVO_COUNT);
+    return;
+  }
 
-  Serial.print(F("> "));
-  Serial.println(cmd);
+  int parseVals[4] = {0};
+  int valCount = 0;
+  int splitStart = 0;
 
-  int spaceIdx = cmd.indexOf(' ');
-  if (spaceIdx > 0) {
-    int servoIndex = cmd.substring(0, spaceIdx).toInt();
-    int angle = cmd.substring(spaceIdx + 1).toInt();
-    if (servoIndex >= 0 && servoIndex <= 3 && angle >= 0) {
-      setServoAngle(servoIndex, angle);
+  for(int i = 0; i <= cmd.length() && valCount < SERVO_COUNT; i++){
+    if(cmd.charAt(i) == ' ' || i == cmd.length()){
+      String numStr = cmd.substring(splitStart, i);
+      if(numStr.toInt() >= 0){
+        parseVals[valCount++] = numStr.toInt();
+      }
+      splitStart = i + 1;
+    }
+  }
+
+  if(valCount == 4){
+    for(int i = 0; i < SERVO_COUNT; i++){
+      int limit;
+      if(i == 1 || i == 2) limit = MAX_ANGLE_LIMITED;
+      else limit = MAX_ANGLE_NORMAL;
+      targets[i] = constrain(parseVals[i], MIN_ANGLE, limit);
+    }
+    Serial.print("Batch OK Target: ");
+    printNumArray(targets, SERVO_COUNT);
+    return;
+  }
+
+  if(valCount == 2){
+    int servoId = parseVals[0];
+    int setAng  = parseVals[1];
+    if(servoId >= 0 && servoId < SERVO_COUNT){
+      int limit;
+      if(servoId == 1 || servoId == 2) limit = MAX_ANGLE_LIMITED;
+      else limit = MAX_ANGLE_NORMAL;
+      targets[servoId] = constrain(setAng, MIN_ANGLE, limit);
+      Serial.print("S");
+      Serial.print(servoId);
+      Serial.print(" target = ");
+      Serial.println(targets[servoId]);
       return;
     }
   }
 
-  if (cmd == "Z") {
-    zeroAll();
-  } else if (cmd == "A") {
-    printAllAngles();
-  } else if (cmd == "H") {
-    printHelp();
-  }
+  Serial.println("Err: cmd invalid, input h for help");
 }
 
-void loop() {
-  if (Serial.available() > 0) {
-    String cmd = Serial.readStringUntil('\n');
-    processCommand(cmd);
+// ===================== SERIAL PRINT UTILS =====================
+void printHelpInfo(){
+  Serial.println("======== Servo Arm Command List ========");
+  Serial.println("h        Show help");
+  Serial.println("s        Print ALL 4 servos current angles");
+  Serial.println("0 60     Set S0 target to 60");
+  Serial.println("90 45 45 0 Batch set all targets");
+  Serial.println("Limit:S1/S2 0-90 | S0/S3 0-180");
+  Serial.println("========================================");
+}
+
+void printNumArray(int arr[], int len){
+  for(int i = 0; i < len; i++){
+    Serial.print(arr[i]);
+    if(i != len - 1) Serial.print(",");
   }
-
-  smoothMove();
-
-  if (systemState != RUNNING) return;
-
-  int joy1X = analogRead(joy1XPin) - 512;
-  int joy1Y = analogRead(joy1YPin) - 512;
-  int joy2X = analogRead(joy2XPin) - 512;
-  int joy2Y = analogRead(joy2YPin) - 512;
-
-  if (abs(joy1X) > deadZone) {
-    servoAngles[0] = constrain(
-      joy1X < 0 ? servoAngles[0] - stepAngle : servoAngles[0] + stepAngle,
-      servoRange[0][0], servoRange[0][1]
-    );
-    targetAngles[0] = servoAngles[0];
-    servos[0].write(servoAngles[0]);
-  }
-
-  if (abs(joy1Y) > deadZone) {
-    servoAngles[1] = constrain(
-      joy1Y < 0 ? servoAngles[1] - stepAngle : servoAngles[1] + stepAngle,
-      servoRange[1][0], servoRange[1][1]
-    );
-    targetAngles[1] = servoAngles[1];
-    servos[1].write(servoAngles[1]);
-  }
-
-  if (abs(joy2X) > deadZone) {
-    servoAngles[2] = constrain(
-      joy2X < 0 ? servoAngles[2] - stepAngle : servoAngles[2] + stepAngle,
-      servoRange[2][0], servoRange[2][1]
-    );
-    targetAngles[2] = servoAngles[2];
-    servos[2].write(servoAngles[2]);
-  }
-
-  if (abs(joy2Y) > deadZone) {
-    servoAngles[3] = constrain(
-      joy2Y < 0 ? servoAngles[3] - stepAngle : servoAngles[3] + stepAngle,
-      servoRange[3][0], servoRange[3][1]
-    );
-    targetAngles[3] = servoAngles[3];
-    servos[3].write(servoAngles[3]);
-  }
-
-  delay(joyDelay);
+  Serial.println();
 }
